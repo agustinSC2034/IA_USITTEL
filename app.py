@@ -78,7 +78,7 @@ def cargar_todos_los_datos() -> Dict[str, pd.DataFrame]:
 
 # ==================== FUNCIONES DE IA ====================
 
-def crear_prompt_router(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> str:
+def crear_prompt_router(pregunta: str, dataframes: Dict[str, pd.DataFrame], contexto: list = None) -> str:
     """
     Crea el prompt para que la IA decida dónde buscar.
     
@@ -96,10 +96,18 @@ def crear_prompt_router(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> s
         total_filas = len(df)
         descripcion_fuentes += f"\n- **{nombre}** ({total_filas} registros): {columnas}"
     
+    # Agregar contexto si existe
+    contexto_texto = ""
+    if contexto and len(contexto) > 0:
+        contexto_texto = "\n\nCONTEXTO DE LA CONVERSACIÓN ANTERIOR:\n"
+        for item in contexto[-3:]:  # Últimas 3 interacciones
+            contexto_texto += f"- Usuario: {item['pregunta']}\n"
+            contexto_texto += f"  Búsqueda en: {item.get('dataframe', 'N/A')}\n"
+    
     prompt = f"""Eres un experto en análisis de datos para un ISP llamado USITTEL.
 
 PREGUNTA DEL USUARIO:
-{pregunta}
+{pregunta}{contexto_texto}
 
 FUENTES DE DATOS DISPONIBLES:
 {descripcion_fuentes}
@@ -233,15 +241,7 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
         else:
             mascara = df[columna] == valor
         
-        return df[mascara]
-    
-    except Exception as e:
-        st.error(f"❌ Error en búsqueda: {str(e)}")
-        return pd.DataFrame()
-
-# ==================== SINTETIZADOR ====================
-
-def crear_prompt_sintetizador(pregunta: str, resultados: pd.DataFrame, dataframe_nombre: str) -> str:
+        return df[mascara], parametros_busqueda: dict = None) -> str:
     """
     Crea el prompt para que la IA sintetice la respuesta final.
     
@@ -249,6 +249,7 @@ def crear_prompt_sintetizador(pregunta: str, resultados: pd.DataFrame, dataframe
         pregunta: Pregunta original del usuario
         resultados: DataFrame con los resultados encontrados
         dataframe_nombre: Nombre de la fuente de datos
+        parametros_busqueda: Parámetros usados en la búsqueda
     
     Returns:
         Prompt formateado
@@ -256,24 +257,40 @@ def crear_prompt_sintetizador(pregunta: str, resultados: pd.DataFrame, dataframe
     if resultados.empty:
         prompt = f"""La búsqueda en '{dataframe_nombre}' no arrojó resultados para: "{pregunta}"
 
-Responde de forma amable indicando que no se encontró información y sugiere reformular la pregunta."""
+Responde de forma amable y concisa indicando que no se encontró información."""
     else:
-        # Para conteos o preguntas generales, mostrar estadísticas
         total_registros = len(resultados)
         
-        # Si hay muchos registros, mostrar solo los primeros
-        if total_registros > 10:
-            resultados_texto = resultados.head(10).to_string(index=False)
-            nota_adicional = f"\n\n(Se muestran solo los primeros 10 de {total_registros} registros encontrados)"
-        else:
-            resultados_texto = resultados.to_string(index=False)
-            nota_adicional = ""
+        # Generar estadísticas útiles según la pregunta
+        info_estadisticas = ""
+        if 'Puertos Libres' in resultados.columns:
+            conteo_puertos = resultados['Puertos Libres'].value_counts().sort_index()
+            info_estadisticas = "\n\nESTADÍSTICAS DE PUERTOS LIBRES:\n"
+            for puertos, cantidad in conteo_puertos.items():
+                info_estadisticas += f"- {cantidad} NAPs con {puertos} puertos libres\n"
         
-        prompt = f"""Eres un asistente virtual de USITTEL. Un usuario preguntó:
+        # Mostrar muestra de datos (máximo 5 para el prompt)
+        if total_registros > 5:
+            muestra = resultados.head(5).to_string(index=False)
+            ejemplos = f"\n\nEJEMPLOS (5 de {total_registros}):\n{muestra}"
+        else:
+            muestra = resultados.to_string(index=False)
+            ejemplos = f"\n\nTODOS LOS REGISTROS ({total_registros}):\n{muestra}"
+        
+        prompt = f"""Eres un asistente virtual de USITTEL conversacional y amigable.
 
 PREGUNTA: {pregunta}
 
-DATOS ENCONTRADOS en '{dataframe_nombre}' (Total: {total_registros} registros):
+TOTAL DE REGISTROS ENCONTRADOS: {total_registros} en '{dataframe_nombre}'
+{info_estadisticas}{ejemplos}
+
+INSTRUCCIONES:
+- Responde de forma natural y conversacional (no formal)
+- Si pregunta "cuántos", da el número TOTAL: {total_registros}
+- Si pide una lista y hay más de 10, da el total y ofrece mostrar ejemplos
+- Si pregunta por múltiples cosas (ej: 0 puertos Y 1 puerto), analiza las estadísticas y responde ambas
+- Sé breve y directo
+- No uses frases como "Con gusto" o "Estimado usuario", habla naturalistros):
 {resultados_texto}{nota_adicional}
 
 TAREA:
@@ -291,9 +308,9 @@ Responde la pregunta del usuario de forma clara, profesional y amable, usando Ú
 def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tuple[str, Optional[pd.DataFrame]]:
     """
     Pipeline completo de RAG (Retrieval Augmented Generation).
-    
-    Args:
-        pregunta: Pregunta del usuario
+    False) as status:
+        st.write("1️⃣ Determinando dónde buscar...")
+        prompt_router = crear_prompt_router(pregunta, dataframes, st.session_state.contexto_conversacion
         dataframes: Diccionario con todas las fuentes de datos
     
     Returns:
@@ -325,8 +342,19 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
         
         if parametros['dataframe'] not in dataframes:
             status.update(label="❌ Fuente de datos no disponible", state="error")
-            return f"La fuente de datos '{parametros['dataframe']}' no está disponible.", None
+            return f"La fuente de datos '{parametros['dataframe']}' no está disponible.", None, parametros)
+        respuesta_final = llamar_gemini(prompt_sintetizador, temperatura=0.3)
         
+        # Guardar en contexto
+        st.session_state.contexto_conversacion.append({
+            'pregunta': pregunta,
+            'dataframe': parametros['dataframe'],
+            'resultados_count': len(resultados)
+        })
+        
+        # Mantener solo últimas 5 interacciones
+        if len(st.session_state.contexto_conversacion) > 5:
+            st.session_state.contexto_conversacion = st.session_state.contexto_conversacion[-5:]
         df = dataframes[parametros['dataframe']]
         resultados = buscar_en_dataframe(df, parametros['columna'], parametros['valor'])
         
@@ -387,9 +415,12 @@ def main():
     
     st.sidebar.info(f"📦 {len(dataframes)} fuentes de datos activas")
     
-    # Inicializar historial de chat
+    # Inicializar historial de chat y contexto
     if "mensajes" not in st.session_state:
         st.session_state.mensajes = []
+    
+    if "contexto_conversacion" not in st.session_state:
+        st.session_state.contexto_conversacion = []
     
     # Mostrar historial de chat
     for mensaje in st.session_state.mensajes:
