@@ -316,16 +316,16 @@ Responde la pregunta del usuario de forma clara, profesional y amable, usando Ú
 def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tuple[str, Optional[pd.DataFrame]]:
     """
     Pipeline completo de RAG (Retrieval Augmented Generation).
-    False) as status:
-        st.write("1️⃣ Determinando dónde buscar...")
-        prompt_router = crear_prompt_router(pregunta, dataframes, st.session_state.contexto_conversacion
+    
+    Args:
+        pregunta: Pregunta del usuario
         dataframes: Diccionario con todas las fuentes de datos
     
     Returns:
         Tupla (respuesta_texto, dataframe_encontrado)
     """
     # PASO 1: Router - Decidir dónde buscar
-    with st.status("🤔 Analizando tu pregunta...", expanded=True) as status:
+    with st.status("🤔 Analizando tu pregunta...", expanded=False) as status:
         st.write("1️⃣ Determinando dónde buscar...")
         prompt_router = crear_prompt_router(pregunta, dataframes)
         respuesta_router = llamar_gemini(prompt_router, temperatura=0.1)
@@ -350,19 +350,8 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
         
         if parametros['dataframe'] not in dataframes:
             status.update(label="❌ Fuente de datos no disponible", state="error")
-            return f"La fuente de datos '{parametros['dataframe']}' no está disponible.", None, parametros)
-        respuesta_final = llamar_gemini(prompt_sintetizador, temperatura=0.3)
+            return f"La fuente de datos '{parametros['dataframe']}' no está disponible.", None
         
-        # Guardar en contexto
-        st.session_state.contexto_conversacion.append({
-            'pregunta': pregunta,
-            'dataframe': parametros['dataframe'],
-            'resultados_count': len(resultados)
-        })
-        
-        # Mantener solo últimas 5 interacciones
-        if len(st.session_state.contexto_conversacion) > 5:
-            st.session_state.contexto_conversacion = st.session_state.contexto_conversacion[-5:]
         df = dataframes[parametros['dataframe']]
         resultados = buscar_en_dataframe(df, parametros['columna'], parametros['valor'])
         
