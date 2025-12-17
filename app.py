@@ -298,16 +298,10 @@ INSTRUCCIONES:
 - Si pide una lista y hay más de 10, da el total y ofrece mostrar ejemplos
 - Si pregunta por múltiples cosas (ej: 0 puertos Y 1 puerto), analiza las estadísticas y responde ambas
 - Sé breve y directo
-- No uses frases como "Con gusto" o "Estimado usuario", habla naturalistros):
-{resultados_texto}{nota_adicional}
-
-TAREA:
-Responde la pregunta del usuario de forma clara, profesional y amable, usando ÚNICAMENTE la información proporcionada.
-- Si pregunta "cuántos", responde con el número exacto: {total_registros}
-- Si hay detalles específicos, menciónalos
-- No inventes ni agregues datos que no estén en la tabla
-- Si hay muchos resultados, puedes resumir las estadísticas principales
+- No uses frases como "Con gusto" o "Estimado usuario", habla natural
 """
+    
+    return prompt
     
     return prompt
 
