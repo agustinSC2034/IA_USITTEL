@@ -241,7 +241,15 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
         else:
             mascara = df[columna] == valor
         
-        return df[mascara], parametros_busqueda: dict = None) -> str:
+        return df[mascara]
+    
+    except Exception as e:
+        st.error(f"❌ Error en búsqueda: {str(e)}")
+        return pd.DataFrame()
+
+# ==================== SINTETIZADOR ====================
+
+def crear_prompt_sintetizador(pregunta: str, resultados: pd.DataFrame, dataframe_nombre: str, parametros_busqueda: dict = None) -> str:
     """
     Crea el prompt para que la IA sintetice la respuesta final.
     
