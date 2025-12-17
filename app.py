@@ -93,7 +93,8 @@ def crear_prompt_router(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> s
     descripcion_fuentes = ""
     for nombre, df in dataframes.items():
         columnas = ", ".join(df.columns.tolist()[:10])  # Primeras 10 columnas
-        descripcion_fuentes += f"\n- **{nombre}**: Columnas disponibles: {columnas}"
+        total_filas = len(df)
+        descripcion_fuentes += f"\n- **{nombre}** ({total_filas} registros): {columnas}"
     
     prompt = f"""Eres un experto en análisis de datos para un ISP llamado USITTEL.
 
@@ -106,15 +107,20 @@ FUENTES DE DATOS DISPONIBLES:
 TAREA:
 Analiza la pregunta y determina:
 1. En qué fuente de datos (DataFrame) buscar
-2. Qué columna filtrar
-3. Qué valor buscar (el término exacto que el usuario mencionó)
+2. Qué columna filtrar (puede ser vacío si es una pregunta general)
+3. Qué valor buscar (puede ser vacío si es un conteo o pregunta general)
+
+EJEMPLOS:
+- "¿Cuántos clientes hay?" → {{"dataframe": "clientes_datos", "columna": "", "valor": ""}}
+- "¿Cuántas NAPs hay?" → {{"dataframe": "naps", "columna": "", "valor": ""}}
+- "¿Cuál es el estado de Juan Perez?" → {{"dataframe": "clientes_datos", "columna": "Nombre", "valor": "Juan Perez"}}
 
 RESPONDE ÚNICAMENTE con un JSON válido en este formato:
 {{
     "dataframe": "nombre_del_dataframe",
-    "columna": "nombre_de_columna",
-    "valor": "valor_a_buscar",
-    "explicacion": "breve explicación de por qué elegiste esto"
+    "columna": "nombre_de_columna_o_vacio",
+    "valor": "valor_a_buscar_o_vacio",
+    "explicacion": "breve explicación"
 }}
 
 Si no puedes determinar dónde buscar, responde:
@@ -188,13 +194,25 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
     
     Args:
         df: DataFrame donde buscar
-        columna: Nombre de la columna
-        valor: Valor a buscar
+        columna: Nombre de la columna (puede estar vacío para búsquedas generales)
+        valor: Valor a buscar (puede estar vacío para retornar todo)
     
     Returns:
         DataFrame filtrado con los resultados
     """
     try:
+        # Si no hay columna ni valor, retornar todo el DataFrame
+        if not columna and not valor:
+            return df
+        
+        # Si no hay columna pero hay valor, buscar en todas las columnas de texto
+        if not columna and valor:
+            mascara_global = pd.Series([False] * len(df))
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    mascara_global |= df[col].astype(str).str.contains(str(valor), case=False, na=False)
+            return df[mascara_global]
+        
         # Verificar que la columna existe
         if columna not in df.columns:
             # Intentar búsqueda case-insensitive en nombres de columnas
@@ -204,6 +222,10 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
             else:
                 st.warning(f"⚠️ Columna '{columna}' no encontrada. Columnas disponibles: {', '.join(df.columns.tolist()[:5])}")
                 return pd.DataFrame()
+        
+        # Si hay columna pero no valor, retornar todo
+        if columna and not valor:
+            return df
         
         # Realizar búsqueda (case-insensitive si es texto)
         if df[columna].dtype == 'object':
@@ -236,20 +258,30 @@ def crear_prompt_sintetizador(pregunta: str, resultados: pd.DataFrame, dataframe
 
 Responde de forma amable indicando que no se encontró información y sugiere reformular la pregunta."""
     else:
-        # Convertir resultados a formato legible
-        resultados_texto = resultados.to_string(index=False, max_rows=10)
+        # Para conteos o preguntas generales, mostrar estadísticas
+        total_registros = len(resultados)
+        
+        # Si hay muchos registros, mostrar solo los primeros
+        if total_registros > 10:
+            resultados_texto = resultados.head(10).to_string(index=False)
+            nota_adicional = f"\n\n(Se muestran solo los primeros 10 de {total_registros} registros encontrados)"
+        else:
+            resultados_texto = resultados.to_string(index=False)
+            nota_adicional = ""
         
         prompt = f"""Eres un asistente virtual de USITTEL. Un usuario preguntó:
 
 PREGUNTA: {pregunta}
 
-DATOS ENCONTRADOS en '{dataframe_nombre}':
-{resultados_texto}
+DATOS ENCONTRADOS en '{dataframe_nombre}' (Total: {total_registros} registros):
+{resultados_texto}{nota_adicional}
 
 TAREA:
 Responde la pregunta del usuario de forma clara, profesional y amable, usando ÚNICAMENTE la información proporcionada.
-No inventes ni agregues datos que no estén en la tabla.
-Si hay múltiples resultados, menciónalos todos brevemente.
+- Si pregunta "cuántos", responde con el número exacto: {total_registros}
+- Si hay detalles específicos, menciónalos
+- No inventes ni agregues datos que no estén en la tabla
+- Si hay muchos resultados, puedes resumir las estadísticas principales
 """
     
     return prompt
