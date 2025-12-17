@@ -150,7 +150,7 @@ def llamar_gemini(prompt: str, temperatura: float = 0.1) -> str:
         Respuesta del modelo
     """
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -198,12 +198,13 @@ def extraer_json_de_respuesta(texto: str) -> Optional[dict]:
 
 def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFrame:
     """
-    Realiza una búsqueda exacta en un DataFrame.
+    Realiza una búsqueda exacta en un DataFrame con soporte multi-filtro.
     
     Args:
         df: DataFrame donde buscar
         columna: Nombre de la columna (puede estar vacío para búsquedas generales)
         valor: Valor a buscar (puede estar vacío para retornar todo)
+              Soporta múltiples valores separados por: "y", "o", ","
     
     Returns:
         DataFrame filtrado con los resultados
@@ -235,13 +236,35 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
         if columna and not valor:
             return df
         
-        # Realizar búsqueda (case-insensitive si es texto)
-        if df[columna].dtype == 'object':
-            mascara = df[columna].astype(str).str.contains(str(valor), case=False, na=False)
-        else:
-            mascara = df[columna] == valor
+        # Parsear múltiples valores (ej: "0 y 2", "0, 2", "activo o inactivo")
+        import re
+        valores_multiples = re.split(r'\s+y\s+|\s+o\s+|,\s*', str(valor))
         
-        return df[mascara]
+        if len(valores_multiples) > 1:
+            # Multi-filtro: buscar cualquiera de los valores
+            mascara_global = pd.Series([False] * len(df))
+            
+            for v in valores_multiples:
+                v = v.strip()
+                if df[columna].dtype == 'object':
+                    mascara_global |= df[columna].astype(str).str.contains(str(v), case=False, na=False)
+                else:
+                    # Intentar convertir a número si la columna es numérica
+                    try:
+                        v_num = float(v) if '.' in v else int(v)
+                        mascara_global |= (df[columna] == v_num)
+                    except:
+                        mascara_global |= (df[columna].astype(str) == str(v))
+            
+            return df[mascara_global]
+        else:
+            # Búsqueda simple (un solo valor)
+            if df[columna].dtype == 'object':
+                mascara = df[columna].astype(str).str.contains(str(valor), case=False, na=False)
+            else:
+                mascara = df[columna] == valor
+            
+            return df[mascara]
     
     except Exception as e:
         st.error(f"❌ Error en búsqueda: {str(e)}")
@@ -285,20 +308,19 @@ Responde de forma amable y concisa indicando que no se encontró información.""
             muestra = resultados.to_string(index=False)
             ejemplos = f"\n\nTODOS LOS REGISTROS ({total_registros}):\n{muestra}"
         
-        prompt = f"""Eres un asistente virtual de USITTEL conversacional y amigable.
+        prompt = f"""Eres un asistente directo y conversacional estilo ChatGPT.
 
 PREGUNTA: {pregunta}
 
-TOTAL DE REGISTROS ENCONTRADOS: {total_registros} en '{dataframe_nombre}'
+RESULTADOS: {total_registros} registros en '{dataframe_nombre}'
 {info_estadisticas}{ejemplos}
 
-INSTRUCCIONES:
-- Responde de forma natural y conversacional (no formal)
-- Si pregunta "cuántos", da el número TOTAL: {total_registros}
-- Si pide una lista y hay más de 10, da el total y ofrece mostrar ejemplos
-- Si pregunta por múltiples cosas (ej: 0 puertos Y 1 puerto), analiza las estadísticas y responde ambas
-- Sé breve y directo
-- No uses frases como "Con gusto" o "Estimado usuario", habla natural
+RESPONDE:
+- Directo, sin saludos ni despedidas formales
+- Números exactos cuando preguntan "cuántos": {total_registros}
+- Si hay múltiples valores filtrados, explica cada uno
+- Tono ChatGPT: natural, claro, sin ceremonias
+- Máximo 2-3 oraciones breves
 """
     
     return prompt
@@ -321,7 +343,11 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
     # PASO 1: Router - Decidir dónde buscar
     with st.status("🤔 Analizando tu pregunta...", expanded=False) as status:
         st.write("1️⃣ Determinando dónde buscar...")
-        prompt_router = crear_prompt_router(pregunta, dataframes)
+        
+        # Obtener contexto de conversación
+        contexto = st.session_state.get('contexto_conversacion', [])
+        
+        prompt_router = crear_prompt_router(pregunta, dataframes, contexto)
         respuesta_router = llamar_gemini(prompt_router, temperatura=0.1)
         
         parametros = extraer_json_de_respuesta(respuesta_router)
@@ -355,6 +381,14 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
         st.write("3️⃣ Generando respuesta...")
         prompt_sintetizador = crear_prompt_sintetizador(pregunta, resultados, parametros['dataframe'])
         respuesta_final = llamar_gemini(prompt_sintetizador, temperatura=0.3)
+        
+        # Guardar en contexto para próximas preguntas
+        st.session_state.contexto_conversacion.append({
+            'pregunta': pregunta,
+            'dataframe': parametros['dataframe'],
+            'columna': parametros['columna'],
+            'valor': parametros['valor']
+        })
         
         status.update(label="✅ ¡Listo!", state="complete")
     
