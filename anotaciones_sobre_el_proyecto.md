@@ -128,7 +128,73 @@ La app abrirá en: `http://localhost:8501`
 
 ## 🌐 Deployment (Compartir con el Equipo)
 
-### Opción Recomendada: Streamlit Cloud (GRATIS) ⭐
+### ✅ PROYECTO DESPLEGADO
+
+**URL Pública**: https://usittel-ia.streamlit.app
+
+**Estado**: ✅ Funcionando (con limitaciones)
+
+**Fecha de Deploy**: 17 de diciembre de 2025
+
+---
+
+## 📊 Estado Actual del Proyecto (17 Dic 2025)
+
+### ✅ Lo que funciona:
+1. **Conexión con Google Sheets** - Lee 758 NAPs, 3573 clientes, etc.
+2. **API de Gemini configurada** - Modelo gemini-2.5-flash
+3. **Interfaz web funcionando** - Chat en Streamlit Cloud
+4. **Búsquedas básicas** - Responde "¿cuántas NAPs hay?" correctamente
+
+### ❌ Problemas actuales:
+
+#### 1. **CUOTA DE GEMINI AGOTADA** 🔴 CRÍTICO
+- Límite gratuito: 20 llamadas/día
+- Ya se consumió hoy
+- **Solución temporal**: Esperar 24 horas
+- **Solución definitiva**: 
+  - Cambiar a modelo con más cuota (gemini-1.5-flash tiene 1500/día)
+  - O pagar por gpt-4o-mini ($0.15 por millón de tokens)
+
+#### 2. **No entiende contexto conversacional** 🟡
+- Pregunta 1: "¿Cuántas NAPs hay?" → Funciona ✅
+- Pregunta 2: "¿Cuántas con 0 puertos?" → No entiende que sigue hablando de NAPs ❌
+- **Necesita**: Sistema de memoria mejorado
+
+#### 3. **No maneja filtros múltiples** 🟡
+- Pregunta: "NAPs con 0 o 2 puertos libres"
+- Busca literalmente "0 y 2" en lugar de filtrar (Puertos=0 OR Puertos=2)
+- **Necesita**: Lógica de búsqueda avanzada
+
+#### 4. **Respuestas demasiado formales** 🟢
+- Dice "¡Hola!" "¿Necesitas saber algo más?"
+- Debería ser más directo tipo ChatGPT
+- **Fácil de arreglar**: Ajustar prompts
+
+---
+
+## 🔧 Próximos Pasos Prioritarios
+
+### Prioridad ALTA:
+1. **Resolver cuota de Gemini**
+   - Cambiar a `gemini-1.5-flash` (1500 llamadas/día gratis)
+   - O implementar caché de respuestas
+
+### Prioridad MEDIA:
+2. **Mejorar contexto conversacional**
+   - Guardar última fuente de datos consultada
+   - Si no especifica fuente, usar la misma que la pregunta anterior
+
+3. **Búsquedas múltiples**
+   - Detectar "0 o 2", "entre 0 y 5", etc.
+   - Generar filtros pandas correctos
+
+### Prioridad BAJA:
+4. **Tono más natural**
+5. **Agregar gráficos**
+6. **Exportar a PDF**
+
+---
 
 #### Paso 1: Crear repositorio en GitHub
 1. Ir a https://github.com/new
