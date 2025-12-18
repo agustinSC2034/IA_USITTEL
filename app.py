@@ -10,6 +10,10 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, Optional, List
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 # ==================== CONFIGURACIÓN ====================
 
@@ -122,6 +126,8 @@ EJEMPLOS:
 - "¿Cuántos clientes hay?" → {{"dataframe": "clientes_datos", "columna": "", "valor": ""}}
 - "¿Cuántas NAPs hay?" → {{"dataframe": "naps", "columna": "", "valor": ""}}
 - "¿Cuál es el estado de Juan Perez?" → {{"dataframe": "clientes_datos", "columna": "Nombre", "valor": "Juan Perez"}}
+- "¿Cuántas NAPs sin puertos libres hay?" → {{"dataframe": "naps", "columna": "Puertos Libres", "valor": "0"}}
+- "¿Cuántas NAPs con 1 puerto libre hay?" → {{"dataframe": "naps", "columna": "Puertos Libres", "valor": "1"}}
 
 RESPONDE ÚNICAMENTE con un JSON válido en este formato:
 {{
@@ -263,7 +269,13 @@ def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFr
             if df[columna].dtype == 'object':
                 mascara = df[columna].astype(str).str.contains(str(valor), case=False, na=False)
             else:
-                mascara = df[columna] == valor
+                # Intentar convertir a número si la columna es numérica
+                try:
+                    v_num = float(valor)
+                    mascara = df[columna] == v_num
+                except:
+                    # Si falla la conversión, comparar como string
+                    mascara = df[columna].astype(str) == str(valor)
             
             return df[mascara]
     
@@ -323,8 +335,6 @@ RESPONDE:
 - Tono ChatGPT: natural, claro, sin ceremonias
 - Máximo 2-3 oraciones breves
 """
-    
-    return prompt
     
     return prompt
 
