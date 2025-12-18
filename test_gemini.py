@@ -35,7 +35,7 @@ try:
     
     # Probar con el primer modelo disponible
     print("\n🤖 Enviando pregunta a Gemini...")
-    model = genai.GenerativeModel('gemini-pro-latest')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     
     # Prueba simple
     response = model.generate_content("Di solo 'Hola, funciono correctamente'")
