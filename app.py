@@ -107,6 +107,9 @@ def crear_prompt_router(pregunta: str, dataframes: Dict[str, pd.DataFrame], cont
         for item in contexto[-3:]:  # Últimas 3 interacciones
             contexto_texto += f"- Usuario: {item['pregunta']}\n"
             contexto_texto += f"  Búsqueda en: {item.get('dataframe', 'N/A')}\n"
+            if 'filtros' in item:
+                contexto_texto += f"  Filtros usados: {item['filtros']}\n"
+
     
     prompt = f"""Eres un experto en análisis de datos para un ISP llamado USITTEL.
 
@@ -119,21 +122,30 @@ FUENTES DE DATOS DISPONIBLES:
 TAREA:
 Analiza la pregunta y determina:
 1. En qué fuente de datos (DataFrame) buscar
-2. Qué columna filtrar (puede ser vacío si es una pregunta general)
-3. Qué valor buscar (puede ser vacío si es un conteo o pregunta general)
+2. Qué filtros aplicar para responder la pregunta con precisión.
+
+IMPORTANTE:
+- Puedes aplicar MÚLTIPLES filtros si es necesario (ej: categoría Y estado).
+- "Abierto" y "Pendiente" son sinónimos. Ambos significan tickets NO finalizados.
+- Si el usuario pide tickets "abiertos" o "pendientes", debes filtrar para EXCLUIR "Resuelto" y "Cerrado".
+- Usa el operador "!=" para excluir valores.
 
 EJEMPLOS:
-- "¿Cuántos clientes hay?" → {{"dataframe": "clientes_datos", "columna": "", "valor": ""}}
-- "¿Cuántas NAPs hay?" → {{"dataframe": "naps", "columna": "", "valor": ""}}
-- "¿Cuál es el estado de Juan Perez?" → {{"dataframe": "clientes_datos", "columna": "Nombre", "valor": "Juan Perez"}}
-- "¿Cuántas NAPs sin puertos libres hay?" → {{"dataframe": "naps", "columna": "Puertos Libres", "valor": "0"}}
-- "¿Cuántas NAPs con 1 puerto libre hay?" → {{"dataframe": "naps", "columna": "Puertos Libres", "valor": "1"}}
+- "¿Cuántos clientes hay?" → {{"dataframe": "clientes_datos", "filtros": []}}
+- "¿Cuál es el estado de Juan Perez?" → {{"dataframe": "clientes_datos", "filtros": [{{"columna": "Nombre", "valor": "Juan Perez"}}]}}
+- "¿Tickets de nueva instalación pendientes?" → {{"dataframe": "tickets", "filtros": [{{"columna": "Categoría Ticket", "valor": "Nueva Instalación"}}, {{"columna": "Estado del Ticket", "valor": "Resuelto", "operador": "!="}}, {{"columna": "Estado del Ticket", "valor": "Cerrado", "operador": "!="}}]}}
+- "¿NAPs con 0 puertos libres?" → {{"dataframe": "naps", "filtros": [{{"columna": "Puertos Libres", "valor": "0"}}]}}
 
 RESPONDE ÚNICAMENTE con un JSON válido en este formato:
 {{
     "dataframe": "nombre_del_dataframe",
-    "columna": "nombre_de_columna_o_vacio",
-    "valor": "valor_a_buscar_o_vacio",
+    "filtros": [
+        {{
+            "columna": "nombre_columna",
+            "valor": "valor_a_buscar",
+            "operador": "==" (default) o "!=" o ">" o "<" o "contiene"
+        }}
+    ],
     "explicacion": "breve explicación"
 }}
 
@@ -203,82 +215,115 @@ def extraer_json_de_respuesta(texto: str) -> Optional[dict]:
 
 # ==================== MOTOR DE BÚSQUEDA ====================
 
-def buscar_en_dataframe(df: pd.DataFrame, columna: str, valor: str) -> pd.DataFrame:
+def buscar_en_dataframe(df: pd.DataFrame, filtros: List[Dict]) -> pd.DataFrame:
     """
-    Realiza una búsqueda exacta en un DataFrame con soporte multi-filtro.
+    Realiza una búsqueda en un DataFrame aplicando múltiples filtros.
     
     Args:
         df: DataFrame donde buscar
-        columna: Nombre de la columna (puede estar vacío para búsquedas generales)
-        valor: Valor a buscar (puede estar vacío para retornar todo)
-              Soporta múltiples valores separados por: "y", "o", ","
+        filtros: Lista de diccionarios con {'columna', 'valor', 'operador'}
     
     Returns:
-        DataFrame filtrado con los resultados
+        DataFrame filtrado
     """
     try:
-        # Si no hay columna ni valor, retornar todo el DataFrame
-        if not columna and not valor:
+        if not filtros:
             return df
-        
-        # Si no hay columna pero hay valor, buscar en todas las columnas de texto
-        if not columna and valor:
-            mascara_global = pd.Series([False] * len(df))
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    mascara_global |= df[col].astype(str).str.contains(str(valor), case=False, na=False)
-            return df[mascara_global]
-        
-        # Verificar que la columna existe
-        if columna not in df.columns:
-            # Intentar búsqueda case-insensitive en nombres de columnas
-            columnas_lower = {col.lower(): col for col in df.columns}
-            if columna.lower() in columnas_lower:
-                columna = columnas_lower[columna.lower()]
-            else:
-                st.warning(f"⚠️ Columna '{columna}' no encontrada. Columnas disponibles: {', '.join(df.columns.tolist()[:5])}")
-                return pd.DataFrame()
-        
-        # Si hay columna pero no valor, retornar todo
-        if columna and not valor:
-            return df
-        
-        # Parsear múltiples valores (ej: "0 y 2", "0, 2", "activo o inactivo")
-        import re
-        valores_multiples = re.split(r'\s+y\s+|\s+o\s+|,\s*', str(valor))
-        
-        if len(valores_multiples) > 1:
-            # Multi-filtro: buscar cualquiera de los valores
-            mascara_global = pd.Series([False] * len(df))
             
-            for v in valores_multiples:
-                v = v.strip()
-                if df[columna].dtype == 'object':
-                    mascara_global |= df[columna].astype(str).str.contains(str(v), case=False, na=False)
+        df_filtrado = df.copy()
+        
+        for filtro in filtros:
+            columna = filtro.get('columna')
+            valor = filtro.get('valor')
+            operador = filtro.get('operador', 'contiene') # Default a contiene
+            
+            if not columna:
+                # Búsqueda global si no hay columna (solo si hay valor)
+                if valor:
+                    mascara_global = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
+                    for col in df_filtrado.columns:
+                        if df_filtrado[col].dtype == 'object':
+                            mascara_global |= df_filtrado[col].astype(str).str.contains(str(valor), case=False, na=False)
+                    df_filtrado = df_filtrado[mascara_global]
+                continue
+
+            # Verificar columna
+            if columna not in df_filtrado.columns:
+                columnas_lower = {col.lower(): col for col in df_filtrado.columns}
+                if columna.lower() in columnas_lower:
+                    columna = columnas_lower[columna.lower()]
                 else:
-                    # Intentar convertir a número si la columna es numérica
-                    try:
-                        v_num = float(v) if '.' in v else int(v)
-                        mascara_global |= (df[columna] == v_num)
-                    except:
-                        mascara_global |= (df[columna].astype(str) == str(v))
+                    st.warning(f"⚠️ Columna '{columna}' no encontrada. Ignorando filtro.")
+                    continue
             
-            return df[mascara_global]
-        else:
-            # Búsqueda simple (un solo valor)
-            if df[columna].dtype == 'object':
-                mascara = df[columna].astype(str).str.contains(str(valor), case=False, na=False)
-            else:
-                # Intentar convertir a número si la columna es numérica
+            # Aplicar filtro según operador
+            if operador == '!=':
+                if df_filtrado[columna].dtype == 'object':
+                    df_filtrado = df_filtrado[~df_filtrado[columna].astype(str).str.contains(str(valor), case=False, na=False)]
+                else:
+                    try:
+                        v_num = float(valor)
+                        df_filtrado = df_filtrado[df_filtrado[columna] != v_num]
+                    except:
+                        df_filtrado = df_filtrado[df_filtrado[columna].astype(str) != str(valor)]
+            
+            elif operador == '>':
                 try:
                     v_num = float(valor)
-                    mascara = df[columna] == v_num
+                    df_filtrado = df_filtrado[df_filtrado[columna] > v_num]
                 except:
-                    # Si falla la conversión, comparar como string
-                    mascara = df[columna].astype(str) == str(valor)
+                    pass # Ignorar si no es numérico
             
-            return df[mascara]
-    
+            elif operador == '<':
+                try:
+                    v_num = float(valor)
+                    df_filtrado = df_filtrado[df_filtrado[columna] < v_num]
+                except:
+                    pass
+
+            elif operador == '==':
+                 if df_filtrado[columna].dtype == 'object':
+                    # Búsqueda exacta para strings (case insensitive)
+                    df_filtrado = df_filtrado[df_filtrado[columna].astype(str).str.lower() == str(valor).lower()]
+                 else:
+                    try:
+                        v_num = float(valor)
+                        df_filtrado = df_filtrado[df_filtrado[columna] == v_num]
+                    except:
+                        df_filtrado = df_filtrado[df_filtrado[columna].astype(str) == str(valor)]
+
+            else: # 'contiene' o default
+                # Lógica original de "contiene" y soporte para múltiples valores con "o"
+                import re
+                valores_multiples = re.split(r'\s+y\s+|\s+o\s+|,\s*', str(valor))
+                
+                mascara_filtro = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
+                
+                if len(valores_multiples) > 1:
+                    for v in valores_multiples:
+                        v = v.strip()
+                        if df_filtrado[columna].dtype == 'object':
+                            mascara_filtro |= df_filtrado[columna].astype(str).str.contains(str(v), case=False, na=False)
+                        else:
+                            try:
+                                v_num = float(v) if '.' in v else int(v)
+                                mascara_filtro |= (df_filtrado[columna] == v_num)
+                            except:
+                                mascara_filtro |= (df_filtrado[columna].astype(str) == str(v))
+                else:
+                    if df_filtrado[columna].dtype == 'object':
+                        mascara_filtro = df_filtrado[columna].astype(str).str.contains(str(valor), case=False, na=False)
+                    else:
+                        try:
+                            v_num = float(valor)
+                            mascara_filtro = (df_filtrado[columna] == v_num)
+                        except:
+                            mascara_filtro = (df_filtrado[columna].astype(str) == str(valor))
+                
+                df_filtrado = df_filtrado[mascara_filtro]
+
+        return df_filtrado
+
     except Exception as e:
         st.error(f"❌ Error en búsqueda: {str(e)}")
         return pd.DataFrame()
@@ -373,8 +418,20 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
         
         # Mostrar decisión del router
         st.write(f"✅ Buscaré en: **{parametros['dataframe']}**")
-        st.write(f"📊 Columna: **{parametros['columna']}**")
-        st.write(f"🔍 Valor: **{parametros['valor']}**")
+        
+        filtros = parametros.get('filtros', [])
+        # Retrocompatibilidad por si acaso la IA alucina el formato viejo
+        if not filtros and 'columna' in parametros:
+             filtros = [{'columna': parametros['columna'], 'valor': parametros['valor']}]
+        
+        if filtros:
+            for i, f in enumerate(filtros):
+                op = f.get('operador', 'contiene')
+                col = f.get('columna', 'Global')
+                val = f.get('valor', '')
+                st.write(f"🔹 Filtro {i+1}: **{col}** {op} **{val}**")
+        else:
+            st.write("🔹 Sin filtros específicos (búsqueda general)")
         
         # PASO 2: Motor de Búsqueda - Ejecutar consulta
         st.write("2️⃣ Buscando en los datos...")
@@ -384,7 +441,7 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
             return f"La fuente de datos '{parametros['dataframe']}' no está disponible.", None
         
         df = dataframes[parametros['dataframe']]
-        resultados = buscar_en_dataframe(df, parametros['columna'], parametros['valor'])
+        resultados = buscar_en_dataframe(df, filtros)
         
         st.write(f"📦 Encontrados: **{len(resultados)}** registros")
         
@@ -397,8 +454,7 @@ def procesar_pregunta(pregunta: str, dataframes: Dict[str, pd.DataFrame]) -> tup
         st.session_state.contexto_conversacion.append({
             'pregunta': pregunta,
             'dataframe': parametros['dataframe'],
-            'columna': parametros['columna'],
-            'valor': parametros['valor']
+            'filtros': filtros
         })
         
         status.update(label="✅ ¡Listo!", state="complete")
