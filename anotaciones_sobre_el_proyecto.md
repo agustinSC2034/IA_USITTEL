@@ -12,7 +12,7 @@
 ## 🔑 Credenciales
 
 ### Google Gemini API
-- **API Key**: `AIzaSyDSY7VaSqDoKIWId_mhvN5D9X3iqC1ELEc`
+- **API Key**: ``
 - **Nombre**: USITTEL_IA_INTERNA
 - **Proyecto**: USITTEL-IA
 - **ID Proyecto**: 354729170096
@@ -219,7 +219,7 @@ git push -u origin main
 3. Seleccionar el repositorio `chatbot-usittel`
 4. En **Advanced settings**, agregar:
    ```
-   GEMINI_API_KEY = AIzaSyDSY7VaSqDoKIWId_mhvN5D9X3iqC1ELEc
+   GEMINI_API_KEY = 
    ```
 5. Clic en **Deploy**
 

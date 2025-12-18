@@ -150,7 +150,8 @@ def llamar_gemini(prompt: str, temperatura: float = 0.1) -> str:
         Respuesta del modelo
     """
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
+        # Usar gemini-pro-latest
+        model = genai.GenerativeModel('gemini-pro-latest')
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
